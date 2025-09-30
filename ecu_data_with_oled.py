@@ -56,13 +56,14 @@ def read_channel(data, off, scale, add):
     return raw, val
 
 def draw_display(name, val):
-    """Draw label and value centered on OLED with fixed spacing"""
+    """Draw label and value centered on OLED with minimal spacing"""
     image = Image.new("1", (OLED_WIDTH, OLED_HEIGHT))
     draw = ImageDraw.Draw(image)
 
     # Label on top
     bbox_label = draw.textbbox((0, 0), name, font=label_font)
     label_w = bbox_label[2] - bbox_label[0]
+    label_h = bbox_label[3] - bbox_label[1]
     draw.text(((OLED_WIDTH - label_w) // 2, 0), name, font=label_font, fill=255)
 
     # Value below
@@ -78,10 +79,9 @@ def draw_display(name, val):
     val_w = bbox_val[2] - bbox_val[0]
     val_h = bbox_val[3] - bbox_val[1]
 
-    # Draw closer to the middle instead of bottom edge
-    y_pos = (OLED_HEIGHT - val_h) // 2 + 8
-    draw.text(( (OLED_WIDTH - val_w) // 2, y_pos ),
-              val_str, font=value_font, fill=255)
+    # Place value directly below label with 1px spacing
+    y_pos = label_h + 1
+    draw.text(((OLED_WIDTH - val_w) // 2, y_pos), val_str, font=value_font, fill=255)
 
     oled.image(image)
     oled.show()
