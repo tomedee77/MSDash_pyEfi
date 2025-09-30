@@ -22,7 +22,6 @@ while not os.path.exists(PORT):
 # ----- Setup serial -----
 ser = serial.Serial(PORT, BAUD, timeout=1)
 
-
 # Channels to display
 channels = [
     {"name": "coolant", "offset": 22, "scale": 0.02, "add": 2.44},
@@ -31,8 +30,6 @@ channels = [
     {"name": "map",     "offset": 18, "scale": 0.1, "add": 0.0},
 ]
 
-# ----- Setup serial -----
-#ser = serial.Serial(PORT, BAUD, timeout=1)
 # ----- Setup button -----
 button = digitalio.DigitalInOut(BUTTON_PIN)
 button.direction = digitalio.Direction.INPUT
@@ -50,6 +47,7 @@ value_font_default = ImageFont.load_default()
 
 # Current channel index
 current_index = 0
+last_press = 0
 
 def read_channel(data, off, scale, add):
     """Big-endian signed 16-bit read"""
@@ -58,7 +56,7 @@ def read_channel(data, off, scale, add):
     return raw, val
 
 def draw_display(name, val):
-    """Draw label and value centered on OLED with smaller value font"""
+    """Draw label and value centered on OLED with fixed spacing"""
     image = Image.new("1", (OLED_WIDTH, OLED_HEIGHT))
     draw = ImageDraw.Draw(image)
 
@@ -66,7 +64,8 @@ def draw_display(name, val):
     bbox_label = draw.textbbox((0, 0), name, font=label_font)
     label_w = bbox_label[2] - bbox_label[0]
     draw.text(((OLED_WIDTH - label_w) // 2, 0), name, font=label_font, fill=255)
-  # Value below with smaller fixed font (smaller than before)
+
+    # Value below
     try:
         value_font = ImageFont.truetype(
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 14
@@ -79,37 +78,35 @@ def draw_display(name, val):
     val_w = bbox_val[2] - bbox_val[0]
     val_h = bbox_val[3] - bbox_val[1]
 
-    draw.text(
-        ((OLED_WIDTH - val_w) // 2, OLED_HEIGHT - val_h - 1),
-        val_str,
-        font=value_font,
-        fill=255,
-    )
+    # Draw closer to the middle instead of bottom edge
+    y_pos = (OLED_HEIGHT - val_h) // 2 + 8
+    draw.text(( (OLED_WIDTH - val_w) // 2, y_pos ),
+              val_str, font=value_font, fill=255)
 
     oled.image(image)
     oled.show()
 
 def main():
-    global current_index
+    global current_index, last_press
     print("Press Ctrl+C to exit.")
     while True:
+        # ----- request + read ECU -----
         ser.write(b"A")  # request ECU packet
         data = ser.read(200)
-        if len(data) < 32:
-            time.sleep(0.1)
-            continue
-  ch = channels[current_index]
-        raw, val = read_channel(data, ch["offset"], ch["scale"], ch["add"])
-        print(f"{ch['name']}: raw={raw:5} val={val:.2f}")
+        if len(data) >= 32:
+            ch = channels[current_index]
+            raw, val = read_channel(data, ch["offset"], ch["scale"], ch["add"])
+            print(f"{ch['name']}: raw={raw:5} val={val:.2f}")
+            draw_display(ch["name"], val)
 
-        draw_display(ch["name"], val)
-
-        # Button pressed? cycle channel
+        # ----- check button fast -----
         if not button.value:  # active low
-            current_index = (current_index + 1) % len(channels)
-            time.sleep(0.3)  # debounce
+            now = time.time()
+            if now - last_press > 0.3:  # debounce
+                current_index = (current_index + 1) % len(channels)
+                last_press = now
 
-        time.sleep(0.5)  # polling interval
+        time.sleep(0.05)  # quick loop for responsiveness
 
 if __name__ == "__main__":
     main()
