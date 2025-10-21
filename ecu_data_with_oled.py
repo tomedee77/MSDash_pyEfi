@@ -9,8 +9,8 @@ import adafruit_ssd1306
 
 # ----- Configuration -----
 PORT = "/dev/ttyUSB0"       # Pi → ECU
-LILLYGO_PORT = "/dev/ttyUSB1"  # Pi → LilyGO
-BAUD = 115200
+LILLYGO_PORT = "/dev/serial0"  # Pi → LilyGO
+BAUD = 38400
 OLED_WIDTH = 128
 OLED_HEIGHT = 32
 BUTTON_PIN = board.D17  # adjust GPIO pin for your button
