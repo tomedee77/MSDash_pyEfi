@@ -2,18 +2,12 @@ import time
 import os
 import serial
 import struct
-from PIL import Image, ImageDraw, ImageFont
-import board
-import digitalio
-import adafruit_ssd1306
 
 # ----- Configuration -----
-PORT = "/dev/ttyUSB0"       # Pi → ECU
-LILLYGO_PORT = "/dev/serial0"  # Pi → LilyGO
-BAUD = 38400
-OLED_WIDTH = 128
-OLED_HEIGHT = 32
-BUTTON_PIN = board.D17  # adjust GPIO pin for your button
+PORT = "/dev/ttyUSB0"         # Pi → ECU
+LILLYGO_PORT = "/dev/serial0" # Pi → LilyGO
+LG_BAUD = 38400
+ECU_BAUD = 115200
 
 # ----- Wait for serial devices -----
 while not os.path.exists(PORT):
@@ -25,35 +19,16 @@ while not os.path.exists(LILLYGO_PORT):
     time.sleep(1)
 
 # ----- Setup serial -----
-ser = serial.Serial(PORT, BAUD, timeout=1)  # ECU
-lily_serial = serial.Serial(LILLYGO_PORT, BAUD, timeout=1)  # LilyGO
+ser = serial.Serial(PORT, ECU_BAUD, timeout=1)           # ECU
+lily_serial = serial.Serial(LILLYGO_PORT, LG_BAUD, timeout=1)  # LilyGO
 
 # ----- Channels to display -----
 channels = [
     {"name": "coolant", "offset": 22, "scale": 0.02, "add": 2.44},
     {"name": "mat",     "offset": 20, "scale": 0.02, "add": 7.06},
-    {"name": "afr1",    "offset": 28, "scale": 0.1, "add": 0.0},
-    {"name": "map",     "offset": 18, "scale": 0.1, "add": 0.0},
+    {"name": "afr1",    "offset": 28, "scale": 0.1,  "add": 0.0},
+    {"name": "map",     "offset": 18, "scale": 0.1,  "add": 0.0},
 ]
-
-# ----- Setup button -----
-button = digitalio.DigitalInOut(BUTTON_PIN)
-button.direction = digitalio.Direction.INPUT
-button.pull = digitalio.Pull.UP
-
-# ----- Setup OLED -----
-i2c = board.I2C()
-oled = adafruit_ssd1306.SSD1306_I2C(OLED_WIDTH, OLED_HEIGHT, i2c)
-oled.fill(0)
-oled.show()
-
-# Fonts
-label_font = ImageFont.load_default()
-value_font_default = ImageFont.load_default()
-
-# Current channel index
-current_index = 0
-last_press = 0
 
 def read_channel(data, off, scale, add):
     """Big-endian signed 16-bit read"""
@@ -61,68 +36,36 @@ def read_channel(data, off, scale, add):
     val = raw * scale + add
     return raw, val
 
-def draw_display(name, val):
-    """Draw label and value centered on OLED with minimal spacing"""
-    image = Image.new("1", (OLED_WIDTH, OLED_HEIGHT))
-    draw = ImageDraw.Draw(image)
-
-    # Label on top
-    bbox_label = draw.textbbox((0, 0), name, font=label_font)
-    label_w = bbox_label[2] - bbox_label[0]
-    label_h = bbox_label[3] - bbox_label[1]
-    draw.text(((OLED_WIDTH - label_w) // 2, 0), name, font=label_font, fill=255)
-
-    # Value below
-    try:
-        value_font = ImageFont.truetype(
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 14
-        )
-    except OSError:
-        value_font = value_font_default
-
-    val_str = f"{val:.2f}"
-    bbox_val = draw.textbbox((0, 0), val_str, font=value_font)
-    val_w = bbox_val[2] - bbox_val[0]
-    val_h = bbox_val[3] - bbox_val[1]
-
-    y_pos = label_h + 1
-    draw.text(((OLED_WIDTH - val_w) // 2, y_pos), val_str, font=value_font, fill=255)
-
-    oled.image(image)
-    oled.show()
-
 def main():
-    global current_index, last_press
-    print("Press Ctrl+C to exit.")
+    print("ECU data parser started — Press Ctrl+C to exit.")
     while True:
         # ----- request + read ECU -----
         ser.write(b"A")  # request ECU packet
         data = ser.read(200)
-        if len(data) >= 32:
-            # Extract values
-            ch = channels[current_index]
-            raw, val = read_channel(data, ch["offset"], ch["scale"], ch["add"])
-            print(f"{ch['name']}: raw={raw:5} val={val:.2f}")
-            draw_display(ch["name"], val)
 
-            # ----- Send ECU data over serial to LilyGO -----
-            # Prepare CSV string: AFR, MAT, Coolant, LS (map)
+        if len(data) >= 32:
+            print(f"\nReceived {len(data)} bytes from ECU")
+
+            # Extract and print values
             afr_raw, afr_val = read_channel(data, channels[2]["offset"], channels[2]["scale"], channels[2]["add"])
             mat_raw, mat_val = read_channel(data, channels[1]["offset"], channels[1]["scale"], channels[1]["add"])
             coolant_raw, coolant_val = read_channel(data, channels[0]["offset"], channels[0]["scale"], channels[0]["add"])
             ls_raw, ls_val = read_channel(data, channels[3]["offset"], channels[3]["scale"], channels[3]["add"])
 
+            # Create CSV
             csv_line = f"{afr_val:.1f},{mat_val:.0f},{coolant_val:.0f},{ls_val:.2f}\n"
+
+            # Print parsed values and what’s sent to LilyGO
+            print(f"AFR={afr_val:.1f}, MAT={mat_val:.0f}, CLT={coolant_val:.0f}, MAP={ls_val:.2f}")
+            print(f"→ Sending to LilyGO: {csv_line.strip()}")
+
+            # Send to LilyGO
             lily_serial.write(csv_line.encode("utf-8"))
 
-        # ----- check button fast -----
-        if not button.value:  # active low
-            now = time.time()
-            if now - last_press > 0.3:  # debounce
-                current_index = (current_index + 1) % len(channels)
-                last_press = now
+        else:
+            print("No valid ECU data received.")
 
-        time.sleep(0.05)  # quick loop for responsiveness
+        time.sleep(0.2)
 
 if __name__ == "__main__":
     main()
